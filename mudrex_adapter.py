@@ -296,15 +296,14 @@ class MudrexStrategyAdapter:
                 error="Asset info unavailable",
             )
         
-        # Calculate position size
-        from strategy import SupertrendTSLStrategy
-        strategy = SupertrendTSLStrategy()  # Use defaults for position sizing
-        raw_quantity = strategy.calculate_position_size(
-            balance=balance,
-            entry_price=signal_result.entry_price,
-            stop_loss=signal_result.stop_loss,
-            leverage=int(self.trading_config.leverage),
-        )
+        # Calculate position size: 2% of balance as margin
+        # Margin = (Quantity * Price) / Leverage
+        # Quantity = (Margin * Leverage) / Price
+        # Margin = Balance * 0.02
+        leverage = int(self.trading_config.leverage)
+        margin = balance * 0.02  # Hardcoded 2% requirement
+        
+        raw_quantity = (margin * leverage) / signal_result.entry_price
         
         # Round to valid quantity
         quantity = self.round_quantity(raw_quantity, asset_info["quantity_step"])
@@ -319,7 +318,7 @@ class MudrexStrategyAdapter:
                 error="Position too small",
             )
         
-        # Open position
+        # Open position with 1:2 RR
         return self.open_position(
             symbol=symbol,
             side=signal,

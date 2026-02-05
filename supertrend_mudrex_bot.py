@@ -263,11 +263,6 @@ class SupertrendMudrexBot:
     def run_once(self) -> BotExecutionResult:
         """
         Run one iteration of the bot.
-        
-        Returns:
-        --------
-        BotExecutionResult
-            Summary of execution
         """
         timestamp = datetime.utcnow()
         errors: List[str] = []
@@ -298,8 +293,22 @@ class SupertrendMudrexBot:
         # Sync positions with exchange
         self.adapter.get_open_positions()
         
+        # Determine symbols to process
+        symbols = self.config.trading.symbols
+        if not symbols:
+            logger.info("No symbols specified, fetching all tradable assets from Mudrex...")
+            try:
+                assets = self.adapter.client.assets.list_all()
+                # Filter for USDT pairs only to match CCXT expectations and common strategy
+                symbols = [a.symbol for a in assets if a.symbol.endswith("USDT") and a.is_active]
+                logger.info(f"Discovered {len(symbols)} active USDT pairs")
+            except Exception as e:
+                logger.error(f"Failed to fetch assets: {e}")
+                errors.append(f"Asset discovery failed: {e}")
+                symbols = []
+
         # Process each symbol
-        for symbol in self.config.trading.symbols:
+        for symbol in symbols:
             try:
                 result = self.process_symbol(symbol, balance)
                 results.append(result.to_dict())
@@ -314,21 +323,25 @@ class SupertrendMudrexBot:
                     trades_executed += 1
                 
                 if not result.success and result.error:
-                    errors.append(f"{symbol}: {result.error}")
+                    # Don't clutter logs with 'Data fetch failed' for obscure pairs
+                    if "Data fetch failed" not in result.message:
+                        errors.append(f"{symbol}: {result.error}")
             
             except Exception as e:
+                # Catch CCXT errors for specific pairs quietly
+                if "symbol not found" in str(e).lower():
+                    continue
                 error = f"Error processing {symbol}: {str(e)}"
-                logger.exception(error)
-                errors.append(error)
+                logger.debug(error)
             
             # Small delay between symbols to avoid rate limits
-            time.sleep(0.5)
+            time.sleep(0.1)
         
         success = len(errors) == 0
         
         logger.info("=" * 50)
         logger.info(f"Bot execution completed")
-        logger.info(f"  Symbols processed: {len(self.config.trading.symbols)}")
+        logger.info(f"  Symbols processed: {len(symbols)}")
         logger.info(f"  Signals generated: {signals_generated}")
         logger.info(f"  Trades executed: {trades_executed}")
         logger.info(f"  TSL updates: {tsl_updates}")
@@ -338,7 +351,7 @@ class SupertrendMudrexBot:
         return BotExecutionResult(
             success=success,
             timestamp=timestamp,
-            symbols_processed=len(self.config.trading.symbols),
+            symbols_processed=len(symbols),
             signals_generated=signals_generated,
             trades_executed=trades_executed,
             tsl_updates=tsl_updates,
