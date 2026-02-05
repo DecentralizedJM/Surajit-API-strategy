@@ -3,13 +3,12 @@
 # ==================================
 pandas>=2.0.0
 numpy>=1.24.0
-ccxt>=4.0.0
 requests>=2.28.0
 
 # ==================================
-# Mudrex SDK (installed from local)
+# Bybit WebSocket (OHLCV)
 # ==================================
-# Installed from ./mudrex-sdk
+pybit>=5.8.0
 
 # ==================================
 # Environment & Config
@@ -17,12 +16,6 @@ requests>=2.28.0
 python-dotenv>=1.0.0
 
 # ==================================
-# Development & Testing
+# Mudrex SDK (local)
 # ==================================
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
-
-# ==================================
-# Railway / Production
-# ==================================
-# No extra deps needed, just standard python container
+# mudrex-sdk is included in the project directory

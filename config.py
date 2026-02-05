@@ -48,16 +48,16 @@ class TradingConfig:
     # Margin type
     margin_type: str = "ISOLATED"
     
-    # Timeframe
-    timeframe: str = "5m"
+    # Timeframe (5m) - Matches Bybit '5'
+    timeframe: str = "5"
     
-    # Number of candles to fetch
-    lookback_periods: int = 100
+    # Number of candles to fetch/maintain
+    lookback_periods: int = 200
     
     # Minimum balance required to trade (USDT)
     min_balance: float = 10.0
     
-    # Maximum concurrent positions (Increased for 'All Symbols' mode)
+    # Maximum concurrent positions
     max_positions: int = 50
     
     # Dry run mode
@@ -91,25 +91,16 @@ class MudrexConfig:
 
 
 @dataclass
-class CCXTConfig:
-    """CCXT configuration for price data."""
-    exchange: str = "binance"
-    sandbox: bool = False
-
-
-@dataclass
 class Config:
     """Main configuration container."""
     
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     mudrex: MudrexConfig = field(default_factory=MudrexConfig)
-    ccxt: CCXTConfig = field(default_factory=CCXTConfig)
     
     @classmethod
     def from_env(cls) -> "Config":
         """Load minimal config from environment."""
-        # Check dry run override from env if needed for safety during setup
         dry_run = os.getenv("TRADING_DRY_RUN", "false").lower() == "true"
         
         config = cls(

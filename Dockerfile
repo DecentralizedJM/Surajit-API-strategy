@@ -1,4 +1,4 @@
-# Use standard Python image for long-running process
+# Standard Python slim image
 FROM python:3.10-slim
 
 # Set environment variables
@@ -9,16 +9,11 @@ ENV PYTHONUNBUFFERED=1 \
 # Set working directory
 WORKDIR /app
 
-# Install git (needed for pip install git+...)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for caching
-COPY requirements.txt .
-
 # Install dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create data directory for volume
+# Create data directory for volume persistence
 RUN mkdir -p /app/data
 
 # Copy Mudrex SDK
@@ -29,6 +24,7 @@ COPY config.py .
 COPY strategy.py .
 COPY mudrex_adapter.py .
 COPY supertrend_mudrex_bot.py .
+COPY data_manager.py .
 COPY main.py .
 
 # Run the bot

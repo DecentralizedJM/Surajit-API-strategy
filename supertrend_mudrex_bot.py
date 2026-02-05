@@ -3,7 +3,8 @@ Supertrend Mudrex Trading Bot
 =============================
 
 Main trading bot that integrates Supertrend TSL Strategy with Mudrex SDK.
-Fetches OHLCV data, generates signals, and executes trades.
+Uses real-time OHLCV data from Bybit WebSocket (via DataManager).
+Generates signals and executes trades via Mudrex SDK.
 """
 
 import sys
@@ -14,12 +15,12 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
-import ccxt
 import pandas as pd
 
 from strategy import SupertrendTSLStrategy, Signal, StrategyResult
 from mudrex_adapter import MudrexStrategyAdapter, ExecutionResult, PositionState
 from config import Config, get_config
+from data_manager import DataManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,18 @@ class SupertrendMudrexBot:
     Trading bot combining Supertrend strategy with Mudrex execution.
     
     This bot:
-    1. Fetches OHLCV data for configured symbols
+    1. Uses DataManager to get real-time OHLCV data from Bybit
     2. Generates signals using Supertrend TSL strategy
     3. Executes trades via Mudrex SDK
     4. Manages trailing stop losses
     """
     
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Config] = None, data_manager: Optional[DataManager] = None):
         self.config = config or get_config()
+        self.data_manager = data_manager or DataManager(
+            interval=self.config.trading.timeframe,
+            lookback=self.config.trading.lookback_periods
+        )
         
         # Initialize strategy
         self.strategy = SupertrendTSLStrategy(
@@ -82,99 +87,25 @@ class SupertrendMudrexBot:
             dry_run=self.config.trading.dry_run,
         )
         
-        # Initialize CCXT exchange
-        self.exchange = self._init_exchange()
-    
-    def _init_exchange(self) -> ccxt.Exchange:
-        """Initialize CCXT exchange for price data."""
-        exchange_id = self.config.ccxt.exchange
-        exchange_class = getattr(ccxt, exchange_id)
-        
-        exchange_config = {
-            "enableRateLimit": True,
-        }
-        
-        if self.config.ccxt.api_key and self.config.ccxt.api_secret:
-            exchange_config["apiKey"] = self.config.ccxt.api_key
-            exchange_config["secret"] = self.config.ccxt.api_secret
-        
-        exchange = exchange_class(exchange_config)
-        
-        if self.config.ccxt.sandbox:
-            exchange.set_sandbox_mode(True)
-        
-        logger.info(f"Initialized {exchange_id} exchange for price data")
-        return exchange
-    
-    def fetch_ohlcv(self, symbol: str) -> Optional[pd.DataFrame]:
-        """
-        Fetch OHLCV data for a symbol.
-        
-        Parameters:
-        -----------
-        symbol : str
-            Trading symbol (e.g., "BTCUSDT")
-            
-        Returns:
-        --------
-        Optional[pd.DataFrame]
-            OHLCV dataframe or None if fetch failed
-        """
-        try:
-            # Convert symbol format for CCXT (e.g., BTCUSDT -> BTC/USDT)
-            ccxt_symbol = f"{symbol[:-4]}/{symbol[-4:]}"  # Assumes 4-char quote (USDT)
-            
-            ohlcv = self.exchange.fetch_ohlcv(
-                symbol=ccxt_symbol,
-                timeframe=self.config.trading.timeframe,
-                limit=self.config.trading.lookback_periods,
-            )
-            
-            df = pd.DataFrame(
-                ohlcv,
-                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            )
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            
-            logger.debug(f"Fetched {len(df)} candles for {symbol}")
-            return df
-        
-        except ccxt.BaseError as e:
-            logger.error(f"Failed to fetch OHLCV for {symbol}: {e}")
-            return None
-    
     def process_symbol(
         self,
         symbol: str,
         balance: float,
     ) -> ExecutionResult:
         """
-        Process a single symbol: fetch data, generate signal, execute.
-        
-        Parameters:
-        -----------
-        symbol : str
-            Trading symbol
-        balance : float
-            Available balance
-            
-        Returns:
-        --------
-        ExecutionResult
-            Result of processing
+        Process a single symbol: get data from manager, generate signal, execute.
         """
         logger.info(f"Processing {symbol}...")
         
-        # Fetch OHLCV data
-        df = self.fetch_ohlcv(symbol)
-        if df is None or len(df) < self.config.trading.lookback_periods // 2:
+        # Get OHLCV data from DataManager
+        df = self.data_manager.get_ohlcv(symbol)
+        if df is None or len(df) < 20: # Ensure enough data for indicators
             return ExecutionResult(
                 success=False,
                 action="NONE",
                 symbol=symbol,
-                message="Failed to fetch sufficient OHLCV data",
-                error="Data fetch failed",
+                message=f"Insufficient candle data for {symbol} ({len(df) if df is not None else 0} candles)",
+                error="Data unavailable",
             )
         
         # Check if we have an existing position
@@ -207,21 +138,8 @@ class SupertrendMudrexBot:
     ) -> ExecutionResult:
         """
         Manage an existing position (update TSL, check for close signal).
-        
-        Parameters:
-        -----------
-        symbol : str
-            Trading symbol
-        df : pd.DataFrame
-            OHLCV data
-            
-        Returns:
-        --------
-        ExecutionResult
-            Result of management
         """
         position = self.adapter._positions[symbol]
-        current_price = df['close'].iloc[-1]
         
         # Update high/low for trailing stop
         if position.side == Signal.LONG:
@@ -299,13 +217,31 @@ class SupertrendMudrexBot:
             logger.info("No symbols specified, fetching all tradable assets from Mudrex...")
             try:
                 assets = self.adapter.client.assets.list_all()
-                # Filter for USDT pairs only to match CCXT expectations and common strategy
+                # Use all active USDT symbols
                 symbols = [a.symbol for a in assets if a.symbol.endswith("USDT") and a.is_active]
                 logger.info(f"Discovered {len(symbols)} active USDT pairs")
             except Exception as e:
                 logger.error(f"Failed to fetch assets: {e}")
                 errors.append(f"Asset discovery failed: {e}")
                 symbols = []
+
+        if not symbols:
+            return BotExecutionResult(
+                success=False,
+                timestamp=timestamp,
+                symbols_processed=0,
+                signals_generated=0,
+                trades_executed=0,
+                tsl_updates=0,
+                errors=["No symbols available"],
+            )
+
+        # Ensure DataManager is subscribed to these symbols
+        self.data_manager.subscribe(symbols)
+        
+        # Wait for some data to arrive if this is the first run
+        if not self.data_manager.wait_for_data(symbols, timeout=10):
+            logger.warning("Still waiting for some symbol data to arrive...")
 
         # Process each symbol
         for symbol in symbols:
@@ -323,19 +259,15 @@ class SupertrendMudrexBot:
                     trades_executed += 1
                 
                 if not result.success and result.error:
-                    # Don't clutter logs with 'Data fetch failed' for obscure pairs
-                    if "Data fetch failed" not in result.message:
+                    if "Data unavailable" not in result.message:
                         errors.append(f"{symbol}: {result.error}")
             
             except Exception as e:
-                # Catch CCXT errors for specific pairs quietly
-                if "symbol not found" in str(e).lower():
-                    continue
                 error = f"Error processing {symbol}: {str(e)}"
                 logger.debug(error)
             
-            # Small delay between symbols to avoid rate limits
-            time.sleep(0.1)
+            # Very small delay just for logging clarity
+            time.sleep(0.01)
         
         success = len(errors) == 0
         
@@ -359,31 +291,6 @@ class SupertrendMudrexBot:
             results=results,
         )
     
-    def run_continuous(self, interval_seconds: int = 300) -> None:
-        """
-        Run the bot continuously at specified interval.
-        
-        Parameters:
-        -----------
-        interval_seconds : int
-            Seconds between executions (default: 300 = 5 minutes)
-        """
-        logger.info(f"Starting continuous bot with {interval_seconds}s interval")
-        
-        while True:
-            try:
-                self.run_once()
-            except KeyboardInterrupt:
-                logger.info("Bot stopped by user")
-                break
-            except Exception as e:
-                logger.exception(f"Bot error: {e}")
-            
-            logger.info(f"Sleeping for {interval_seconds} seconds...")
-            time.sleep(interval_seconds)
-        
-        self.close()
-    
     def load_state(self, state: Dict[str, Any]) -> None:
         """Load state from storage."""
         self.adapter.load_state(state)
@@ -394,6 +301,7 @@ class SupertrendMudrexBot:
     
     def close(self) -> None:
         """Clean up resources."""
+        self.data_manager.stop()
         self.adapter.close()
         logger.info("Bot closed")
 
@@ -410,8 +318,6 @@ def main():
     
     parser = argparse.ArgumentParser(description="Supertrend Mudrex Trading Bot")
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (no real trades)")
-    parser.add_argument("--continuous", action="store_true", help="Run continuously")
-    parser.add_argument("--interval", type=int, default=300, help="Interval in seconds (for continuous mode)")
     parser.add_argument("--symbols", nargs="+", help="Override trading symbols")
     
     args = parser.parse_args()
@@ -429,17 +335,19 @@ def main():
     bot = SupertrendMudrexBot(config)
     
     try:
-        if args.continuous:
-            bot.run_continuous(interval_seconds=args.interval)
-        else:
-            result = bot.run_once()
-            print("\nExecution Result:")
-            print(f"  Success: {result.success}")
-            print(f"  Symbols: {result.symbols_processed}")
-            print(f"  Trades: {result.trades_executed}")
-            print(f"  TSL Updates: {result.tsl_updates}")
-            if result.errors:
-                print(f"  Errors: {result.errors}")
+        # Initial wait for WebSocket data
+        bot.data_manager.start()
+        print("Starting WebSocket and waiting for initial data...")
+        time.sleep(10)
+        
+        result = bot.run_once()
+        print("\nExecution Result:")
+        print(f"  Success: {result.success}")
+        print(f"  Symbols: {result.symbols_processed}")
+        print(f"  Trades: {result.trades_executed}")
+        print(f"  TSL Updates: {result.tsl_updates}")
+        if result.errors:
+            print(f"  Errors: {result.errors}")
     finally:
         bot.close()
 
