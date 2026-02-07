@@ -22,6 +22,7 @@ from mudrex_adapter import MudrexStrategyAdapter, ExecutionResult, PositionState
 from mudrex_adapter import Signal
 from config import Config, get_config
 from data_manager import DataManager
+from telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,12 @@ class SupertrendMudrexBot:
             mudrex_config=self.config.mudrex,
             trading_config=self.config.trading,
             dry_run=self.config.trading.dry_run,
+        )
+
+        # Initialize Telegram notifier (no-op if not configured)
+        self.notifier = TelegramNotifier(
+            bot_token=self.config.telegram.bot_token,
+            chat_id=self.config.telegram.chat_id,
         )
         
     def _df_to_ohlcv(self, df: pd.DataFrame) -> list[dict]:
@@ -165,11 +172,37 @@ class SupertrendMudrexBot:
         logger.info(f"{symbol} Signal: {output['signal']} ({output['reason']})")
 
         if output["signal"] in ("LONG", "SHORT") and output.get("proposed_position"):
-            return self.adapter.execute_proposed_position(symbol, output["proposed_position"])
+            result = self.adapter.execute_proposed_position(symbol, output["proposed_position"])
+            if result.success and result.position_state and result.action in ("OPEN_LONG", "OPEN_SHORT"):
+                pp = output["proposed_position"]
+                self.notifier.notify_open(
+                    symbol=symbol,
+                    side=pp["side"],
+                    quantity=pp["quantity"],
+                    entry_price=pp["entry_price"],
+                    stop_loss=pp["stop_loss"],
+                    take_profit=pp["take_profit"],
+                    leverage=pp.get("leverage", 5),
+                    dry_run=self.config.trading.dry_run,
+                )
+            return result
 
         if output["signal"] == "EXIT":
             logger.info(f"Exit signal for {symbol}: {output['reason']}")
-            return self.adapter.close_position(symbol)
+            pos = self.adapter._positions.get(symbol)
+            exit_price = float(df["close"].iloc[-1]) if pos else 0.0
+            result = self.adapter.close_position(symbol)
+            if result.success and pos:
+                self.notifier.notify_close(
+                    symbol=symbol,
+                    side=pos.side.value,
+                    reason=output["reason"],
+                    entry_price=pos.entry_price,
+                    exit_price=exit_price,
+                    quantity=pos.quantity,
+                    dry_run=self.config.trading.dry_run,
+                )
+            return result
 
         if output["signal"] == "HOLD" and self.adapter.has_position(symbol):
             pos = self.adapter._positions[symbol]
@@ -294,7 +327,23 @@ class SupertrendMudrexBot:
             time.sleep(0.01)
         
         success = len(errors) == 0
-        
+
+        # Cycle summary notification (only if something noteworthy or errors)
+        if signals_generated > 0 or trades_executed > 0 or tsl_updates > 0 or errors:
+            positions_count = len(self.adapter._positions)
+            opened_count = sum(1 for r in results if r.get("action") in ("OPEN_LONG", "OPEN_SHORT") and r.get("success"))
+            closed_count = sum(1 for r in results if r.get("action") == "CLOSE" and r.get("success"))
+            self.notifier.notify_cycle(
+                balance=balance,
+                positions_count=positions_count,
+                signals=signals_generated,
+                opened=opened_count,
+                closed=closed_count,
+                tsl_updates=tsl_updates,
+                errors=len(errors),
+                dry_run=self.config.trading.dry_run,
+            )
+
         logger.info("=" * 50)
         logger.info(f"Bot execution completed")
         logger.info(f"  Symbols processed: {len(symbols)}")
@@ -303,7 +352,7 @@ class SupertrendMudrexBot:
         logger.info(f"  TSL updates: {tsl_updates}")
         logger.info(f"  Errors: {len(errors)}")
         logger.info("=" * 50)
-        
+
         return BotExecutionResult(
             success=success,
             timestamp=timestamp,

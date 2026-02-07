@@ -26,6 +26,7 @@ COPY strategy_core ./strategy_core
 COPY config.py .
 COPY strategy.py .
 COPY mudrex_adapter.py .
+COPY telegram_notifier.py .
 COPY supertrend_mudrex_bot.py .
 COPY data_manager.py .
 COPY main.py .

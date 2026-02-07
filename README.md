@@ -167,6 +167,8 @@ On every candle close, `process_candle` returns:
 |----------|----------|-------------|
 | `MUDREX_API_SECRET` | **YES** | Mudrex API Secret |
 | `TRADING_DRY_RUN` | No | `true` for testing (default: `false`) |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram bot token (from @BotFather) |
+| `TELEGRAM_CHAT_ID` | No | Telegram chat ID (from @userinfobot). Notifications disabled if not set. |
 
 ---
 
@@ -193,6 +195,7 @@ strategy_core/           # Pure strategy logic (no Mudrex, no WebSocket)
 └── config.py            # StrategyConfig
 
 mudrex_adapter.py        # Bridge to Mudrex SDK (orders, positions, TSL)
+telegram_notifier.py     # Telegram notifications (open, close, PnL, cycle summary)
 supertrend_mudrex_bot.py # Orchestrator (DataManager → strategy_core → adapter)
 data_manager.py          # Bybit WebSocket OHLCV
 config.py                # App config

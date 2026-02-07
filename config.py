@@ -71,6 +71,21 @@ class TradingConfig:
 
 
 @dataclass
+class TelegramConfig:
+    """Telegram notifications configuration."""
+
+    bot_token: str = ""
+    chat_id: str = ""
+
+    @classmethod
+    def from_env(cls) -> "TelegramConfig":
+        return cls(
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        )
+
+
+@dataclass
 class MudrexConfig:
     """Mudrex API configuration."""
     
@@ -99,18 +114,20 @@ class MudrexConfig:
 @dataclass
 class Config:
     """Main configuration container."""
-    
+
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     mudrex: MudrexConfig = field(default_factory=MudrexConfig)
-    
+    telegram: TelegramConfig = field(default_factory=TelegramConfig.from_env)
+
     @classmethod
     def from_env(cls) -> "Config":
         """Load minimal config from environment."""
         dry_run = os.getenv("TRADING_DRY_RUN", "false").lower() == "true"
-        
+
         config = cls(
             mudrex=MudrexConfig.from_env(),
+            telegram=TelegramConfig.from_env(),
         )
         config.trading.dry_run = dry_run
         return config
