@@ -318,9 +318,8 @@ class SupertrendMudrexBot:
                 elif result.action == "CLOSE" and result.success:
                     trades_executed += 1
                 
-                if not result.success and result.error:
-                    if "Data unavailable" not in result.message:
-                        errors.append(f"{symbol}: {result.error}")
+                if not result.success and result.error and result.error != "Data unavailable":
+                    errors.append(f"{symbol}: {result.error}")
             
             except Exception as e:
                 error = f"Error processing {symbol}: {str(e)}"
