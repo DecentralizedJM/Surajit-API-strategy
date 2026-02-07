@@ -516,7 +516,7 @@ class MudrexStrategyAdapter:
         logger.info(f"  Take Profit: ${take_profit:.4f}")
         
         if not self.dry_run:
-            delay = getattr(self.trading_config, "order_delay_seconds", 0.5)
+            delay = getattr(self.trading_config, "order_delay_seconds", 4.0)
             if delay > 0:
                 time.sleep(delay)
         

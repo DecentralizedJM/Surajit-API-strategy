@@ -72,8 +72,8 @@ class TradingConfig:
     # Min order value (notional = quantity x price) in USDT. Mudrex ~$7-8. Set via MIN_ORDER_VALUE.
     min_order_value: float = 7.0
 
-    # Delay (seconds) between order API calls to respect rate limits. Set via ORDER_DELAY_SECONDS.
-    order_delay_seconds: float = 2.0
+    # Delay (seconds) between order API calls. Hardcoded 4s for safe rate limits; env ORDER_DELAY_SECONDS overrides.
+    order_delay_seconds: float = 4.0
     
     # Maximum concurrent positions (no cap = 999)
     max_positions: int = 999
@@ -157,7 +157,7 @@ class Config:
         except ValueError:
             config.trading.min_order_value = 7.0
         try:
-            config.trading.order_delay_seconds = max(0.0, float(os.getenv("ORDER_DELAY_SECONDS", "2").strip()))
+            config.trading.order_delay_seconds = max(0.5, float(os.getenv("ORDER_DELAY_SECONDS", "4").strip()))
         except ValueError:
             config.trading.order_delay_seconds = 0.5
         tf = os.getenv("TIMEFRAME", "").strip()
