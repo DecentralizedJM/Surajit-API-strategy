@@ -50,20 +50,20 @@ class DataManager:
         """Subscribe to kline streams for a list of symbols."""
         if not self.ws:
             self.start()
-            
+
         new_symbols = [s for s in symbols if s not in self.active_symbols]
         if not new_symbols:
             return
-            
-        for symbol in new_symbols:
-            logger.info(f"Subscribing to Bybit kline.{self.interval} for {symbol}")
-            self.ws.kline_stream(
-                interval=self.interval,
-                symbol=symbol,
-                callback=self._handle_kline
-            )
-            with self._lock:
-                # Initialize empty DF if not exists
+
+        logger.info(f"Subscribing to Bybit kline.{self.interval} for {len(new_symbols)} symbols (batch)")
+        # Subscribe once with full list so pybit registers callback per topic (not overwritten)
+        self.ws.kline_stream(
+            interval=self.interval,
+            symbol=new_symbols,
+            callback=self._handle_kline,
+        )
+        with self._lock:
+            for symbol in new_symbols:
                 if symbol not in self.data:
                     self.data[symbol] = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 self.active_symbols.add(symbol)
@@ -73,7 +73,7 @@ class DataManager:
         try:
             if "data" not in message:
                 return
-                
+
             for kline in message["data"]:
                 symbol = message["topic"].split(".")[-1]
                 
