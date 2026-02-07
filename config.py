@@ -58,8 +58,8 @@ class TradingConfig:
     # Margin type
     margin_type: str = "ISOLATED"
     
-    # Timeframe (5m) - Matches Bybit '5'
-    timeframe: str = "5"
+    # Timeframe - Bybit interval: '1', '5', '15', '60', 'D'. Set via env TIMEFRAME. Default 15m.
+    timeframe: str = "15"
     
     # Number of candles to fetch/maintain
     lookback_periods: int = 200
@@ -142,6 +142,9 @@ class Config:
         )
         config.trading.dry_run = dry_run
         config.trading.margin_percent = margin_percent
+        tf = os.getenv("TIMEFRAME", "").strip()
+        if tf:
+            config.trading.timeframe = tf
         config.strategy.margin_pct = margin_percent / 100.0
         return config
     
