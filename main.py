@@ -87,7 +87,8 @@ def main():
         sys.exit(1)
         
     logger.info(f"Mode: {'DRY RUN' if config.trading.dry_run else 'LIVE TRADING'}")
-    
+    logger.info("Config: timeframe=%s, margin_percent=%s%%, max_positions=%s", config.trading.timeframe, config.trading.margin_percent, config.trading.max_positions)
+
     # Initialize Data Manager
     data_manager = DataManager(
         interval=config.trading.timeframe,

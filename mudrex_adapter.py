@@ -308,8 +308,18 @@ class MudrexStrategyAdapter:
                 symbol=symbol,
                 message=f"No signal for {symbol}",
             )
+
+        # Enforce max concurrent positions
+        if len(self._positions) >= self.trading_config.max_positions:
+            return ExecutionResult(
+                success=False,
+                action="NONE",
+                symbol=symbol,
+                message=f"Max positions reached ({self.trading_config.max_positions})",
+                error="Max positions reached",
+            )
         
-        # Get asset info for quantity rounding
+        # Get asset info for quantity rounding (required; do not trade with default spec)
         asset_info = self.get_asset_info(symbol)
         if not asset_info:
             return ExecutionResult(
@@ -325,6 +335,10 @@ class MudrexStrategyAdapter:
         # Quantity = (Margin * Leverage) / Price
         # Margin = Balance * (margin_percent / 100)
         leverage = int(self.trading_config.leverage)
+        leverage = max(
+            self.trading_config.leverage_min,
+            min(self.trading_config.leverage_max, leverage),
+        )
         margin_pct = self.trading_config.margin_percent / 100.0
         margin = balance * margin_pct
         
@@ -359,9 +373,22 @@ class MudrexStrategyAdapter:
         proposed_position: dict,
     ) -> ExecutionResult:
         """Open position from strategy_core proposed_position (quantity, leverage precomputed)."""
+        if len(self._positions) >= self.trading_config.max_positions:
+            return ExecutionResult(
+                success=False,
+                action="NONE",
+                symbol=symbol,
+                message=f"Max positions reached ({self.trading_config.max_positions})",
+                error="Max positions reached",
+            )
         side = Signal(proposed_position["side"])
         quantity = proposed_position["quantity"]
-        leverage = str(proposed_position.get("leverage", self.trading_config.leverage))
+        lev = int(proposed_position.get("leverage", self.trading_config.leverage))
+        lev = max(
+            self.trading_config.leverage_min,
+            min(self.trading_config.leverage_max, lev),
+        )
+        leverage = str(lev)
         entry_price = proposed_position["entry_price"]
         stop_loss = proposed_position["stop_loss"]
         take_profit = proposed_position["take_profit"]

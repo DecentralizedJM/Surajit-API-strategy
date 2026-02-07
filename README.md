@@ -98,7 +98,7 @@ sequenceDiagram
 | **Exits** | | |
 | Time stop | 24 candles | Exit if neither TP nor SL hit |
 | **Data** | | |
-| Timeframe | 5m | Bybit kline interval |
+| Timeframe | 15m | Bybit kline interval (set via `TIMEFRAME` env) |
 | Lookback | 200 | Candles to maintain |
 
 ---
@@ -165,10 +165,31 @@ On every candle close, `process_candle` returns:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MUDREX_API_SECRET` | **YES** | Mudrex API Secret |
-| `TRADING_DRY_RUN` | No | `true` for testing (default: `false`) |
+| `MUDREX_API_SECRET` | **YES** (live) | Mudrex API Secret. Live trading is blocked if missing. |
+| `TIMEFRAME` | No | Bybit kline interval: `1`, `5`, `15`, `60`, `D`. Default: `15` (15-minute). |
+| `MARGIN_PERCENT` | No | Margin per entry as percent of balance (1–100). Default: `2` (2%). |
+| `TRADING_DRY_RUN` | No | `true` for testing (default: `false`). When `true`, no real orders are sent. |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token (from @BotFather) |
 | `TELEGRAM_CHAT_ID` | No | Comma-separated chat IDs (from @userinfobot). Supports multiple users/channels. |
+
+**Symbols**: If no symbols are configured (default), the bot fetches all active USDT pairs from Mudrex. To limit symbols, set `config.trading.symbols` in code or use `--symbols` when running locally (e.g. `python run_local.py --symbols BTCUSDT,ETHUSDT`).
+
+---
+
+## Backtest and walk-forward
+
+Run a single-symbol backtest or a small walk-forward param search (no live trading):
+
+```bash
+python scripts/backtest_supertrend.py --symbol BTCUSDT --interval 15 --limit 500
+python scripts/backtest_supertrend.py --symbol BTCUSDT --walk-forward
+```
+
+Unit tests (indicators, sizing, engine, dry-run integration):
+
+```bash
+python -m pytest tests/ -v
+```
 
 ---
 

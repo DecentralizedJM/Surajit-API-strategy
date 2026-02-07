@@ -4,6 +4,7 @@ Bybit Data Manager
 
 Manages real-time OHLCV data using Bybit WebSocket (V5).
 Subscribes to kline streams for symbols and maintains a cache of recent candles.
+Backfills historical klines via REST so the strategy has enough bars from cycle 1.
 """
 
 import time
@@ -11,7 +12,7 @@ import logging
 import threading
 from typing import Dict, List, Optional
 import pandas as pd
-from pybit.unified_trading import WebSocket
+from pybit.unified_trading import WebSocket, HTTP
 
 logger = logging.getLogger("data_manager")
 
@@ -25,8 +26,68 @@ class DataManager:
         self.lookback = lookback
         self.data: Dict[str, pd.DataFrame] = {}
         self.ws: Optional[WebSocket] = None
+        self._http: Optional[HTTP] = None  # REST for backfill only (public, no key)
         self._lock = threading.Lock()
         self.active_symbols: set = set()
+
+    def _http_session(self) -> HTTP:
+        if self._http is None:
+            self._http = HTTP(testnet=False)
+        return self._http
+
+    def _backfill(self, symbols: List[str]) -> None:
+        """Fetch last N candles via REST so we have enough data for strategy from cycle 1."""
+        limit = min(200, max(self.lookback, 20))
+        ok = 0
+        partial = 0  # symbols with some but < limit candles
+        failed = 0
+        min_bars_required = 20
+        for i, symbol in enumerate(symbols):
+            try:
+                r = self._http_session().get_kline(
+                    category="linear",
+                    symbol=symbol,
+                    interval=self.interval,
+                    limit=limit,
+                )
+                result = (r or {}).get("result", {})
+                rows = result.get("list") or []
+                if not rows:
+                    failed += 1
+                    continue
+                # Bybit returns newest first; we want oldest first
+                rows = list(reversed(rows))
+                if len(rows) < min_bars_required:
+                    partial += 1
+                # Each row: [startTime, open, high, low, close, volume, turnover]
+                data = []
+                for row in rows:
+                    ts = int(row[0])
+                    data.append({
+                        "timestamp": pd.to_datetime(ts, unit="ms"),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5]),
+                    })
+                df = pd.DataFrame(data).set_index("timestamp")
+                with self._lock:
+                    self.data[symbol] = df
+                ok += 1
+            except Exception as e:
+                failed += 1
+                logger.debug(f"Backfill {symbol}: {e}")
+            if (i + 1) % 100 == 0:
+                logger.info(f"Backfill progress: {i + 1}/{len(symbols)} symbols")
+            time.sleep(0.04)  # ~25 req/s to avoid Bybit rate limit
+        # Coverage and gap metrics
+        logger.info(
+            f"Backfill complete: {ok}/{len(symbols)} symbols, {limit} candles requested; "
+            f"partial(<{min_bars_required} bars)={partial}, failed={failed}"
+        )
+        if failed > 0:
+            logger.warning(f"Backfill failed for {failed} symbols (no data or API error)")
         
     def start(self):
         """Start the Bybit WebSocket connection."""
@@ -67,6 +128,9 @@ class DataManager:
                 if symbol not in self.data:
                     self.data[symbol] = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 self.active_symbols.add(symbol)
+
+        # Backfill historical klines so we have 20+ bars from first cycle (no ~100 min wait)
+        self._backfill(new_symbols)
                 
     def _handle_kline(self, message: Dict):
         """Callback for WebSocket kline messages."""
@@ -123,10 +187,19 @@ class DataManager:
             missing = False
             with self._lock:
                 for s in symbols:
-                    if s not in self.data or len(self.data[s]) < 2: # Need at least 2 candles for Supertrend
+                    if s not in self.data or len(self.data[s]) < 2:  # Need at least 2 candles for Supertrend
                         missing = True
                         break
             if not missing:
                 return True
             time.sleep(1)
         return False
+
+    def get_data_coverage(self, symbols: List[str], min_bars: int = 20) -> dict:
+        """Return coverage metrics for observability: symbols with sufficient bars and total."""
+        with self._lock:
+            sufficient = sum(
+                1 for s in symbols
+                if s in self.data and len(self.data[s]) >= min_bars
+            )
+        return {"symbols_with_sufficient_data": sufficient, "total": len(symbols)}

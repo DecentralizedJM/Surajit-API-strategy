@@ -48,8 +48,10 @@ class TradingConfig:
     # Set to empty list to automatically fetch ALL tradable assets from Mudrex
     symbols: List[str] = field(default_factory=list)
     
-    # Default leverage
+    # Default leverage (clamped to leverage_min/max at execution)
     leverage: str = "5"
+    leverage_min: int = 5
+    leverage_max: int = 10
 
     # Margin per entry as percent of balance (1-100). Default 2%
     # Set via env MARGIN_PERCENT (e.g. 2 for 2%, 5 for 5%)
@@ -142,6 +144,8 @@ class Config:
         )
         config.trading.dry_run = dry_run
         config.trading.margin_percent = margin_percent
+        config.trading.leverage_min = config.strategy.leverage_min
+        config.trading.leverage_max = config.strategy.leverage_max
         tf = os.getenv("TIMEFRAME", "").strip()
         if tf:
             config.trading.timeframe = tf

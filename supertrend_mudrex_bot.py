@@ -329,6 +329,16 @@ class SupertrendMudrexBot:
             time.sleep(0.01)
         
         success = len(errors) == 0
+        skipped_no_data = sum(
+            1 for r in results
+            if r.get("error") == "Data unavailable" or "Insufficient candle" in (r.get("message") or "")
+        )
+        coverage = self.data_manager.get_data_coverage(symbols, min_bars=20)
+        logger.info(
+            "cycle_metrics symbols_processed=%s signals=%s trades_executed=%s tsl_updates=%s errors=%s skipped_no_data=%s data_sufficient=%s/%s",
+            len(symbols), signals_generated, trades_executed, tsl_updates, len(errors),
+            skipped_no_data, coverage["symbols_with_sufficient_data"], coverage["total"],
+        )
 
         # Cycle summary notification (only if something noteworthy or errors)
         if signals_generated > 0 or trades_executed > 0 or tsl_updates > 0 or errors:
@@ -344,6 +354,8 @@ class SupertrendMudrexBot:
                 tsl_updates=tsl_updates,
                 errors=len(errors),
                 dry_run=self.config.trading.dry_run,
+                timeframe=self.config.trading.timeframe,
+                margin_percent=self.config.trading.margin_percent,
             )
 
         logger.info("=" * 50)

@@ -105,10 +105,15 @@ class TelegramNotifier:
         tsl_updates: int,
         errors: int,
         dry_run: bool = False,
+        timeframe: str = "",
+        margin_percent: int = 0,
     ) -> bool:
         prefix = "[DRY] " if dry_run else ""
+        header = f"{prefix}📊 <b>Cycle Summary</b>"
+        if timeframe or margin_percent:
+            header += f" (TF: {timeframe} | Margin: {margin_percent}%)"
         text = (
-            f"{prefix}📊 <b>Cycle Summary</b>\n"
+            f"{header}\n"
             f"Balance: ${balance:.2f} | Positions: {positions_count}\n"
             f"Signals: {signals} | Opened: {opened} | Closed: {closed} | TSL: {tsl_updates}\n"
             f"Errors: {errors}"
