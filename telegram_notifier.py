@@ -3,11 +3,12 @@ Telegram Notifier
 =================
 
 Sends bot notifications to Telegram via Bot API.
+Supports multiple chat IDs (comma-separated in TELEGRAM_CHAT_ID).
 Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 """
 
 import logging
-from typing import Optional
+from typing import List, Union
 
 import requests
 
@@ -17,36 +18,38 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 class TelegramNotifier:
-    """Send notifications to Telegram. No-op if token or chat_id not configured."""
+    """Send notifications to Telegram. No-op if token or chat_ids not configured."""
 
-    def __init__(self, bot_token: str = "", chat_id: str = ""):
+    def __init__(self, bot_token: str = "", chat_ids: Union[str, List[str]] = ""):
         self.bot_token = (bot_token or "").strip()
-        self.chat_id = (chat_id or "").strip()
-        self.enabled = bool(self.bot_token and self.chat_id)
+        if isinstance(chat_ids, str):
+            raw = (chat_ids or "").strip()
+            self.chat_ids = [c.strip() for c in raw.split(",") if c.strip()]
+        else:
+            self.chat_ids = [str(c).strip() for c in (chat_ids or []) if str(c).strip()]
+        self.enabled = bool(self.bot_token and self.chat_ids)
 
     def send(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send message to Telegram. Returns True if sent, False otherwise."""
+        """Send message to all configured chat IDs. Returns True if at least one sent."""
         if not self.enabled:
             return False
-        try:
-            url = TELEGRAM_API.format(token=self.bot_token)
-            r = requests.post(
-                url,
-                json={
-                    "chat_id": self.chat_id,
-                    "text": text[:4096],  # Telegram limit
-                    "parse_mode": parse_mode,
-                    "disable_web_page_preview": True,
-                },
-                timeout=10,
-            )
-            if not r.ok:
-                logger.warning(f"Telegram send failed: {r.status_code} {r.text[:200]}")
-                return False
-            return True
-        except Exception as e:
-            logger.warning(f"Telegram send error: {e}")
-            return False
+        ok = False
+        payload = {
+            "text": text[:4096],
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }
+        url = TELEGRAM_API.format(token=self.bot_token)
+        for chat_id in self.chat_ids:
+            try:
+                r = requests.post(url, json={**payload, "chat_id": chat_id}, timeout=10)
+                if r.ok:
+                    ok = True
+                else:
+                    logger.warning(f"Telegram send failed for {chat_id}: {r.status_code}")
+            except Exception as e:
+                logger.warning(f"Telegram send error for {chat_id}: {e}")
+        return ok
 
     def notify_open(
         self,

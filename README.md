@@ -168,7 +168,7 @@ On every candle close, `process_candle` returns:
 | `MUDREX_API_SECRET` | **YES** | Mudrex API Secret |
 | `TRADING_DRY_RUN` | No | `true` for testing (default: `false`) |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token (from @BotFather) |
-| `TELEGRAM_CHAT_ID` | No | Telegram chat ID (from @userinfobot). Notifications disabled if not set. |
+| `TELEGRAM_CHAT_ID` | No | Comma-separated chat IDs (from @userinfobot). Supports multiple users/channels. |
 
 ---
 

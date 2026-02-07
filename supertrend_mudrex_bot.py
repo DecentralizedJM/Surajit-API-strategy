@@ -95,7 +95,7 @@ class SupertrendMudrexBot:
         # Initialize Telegram notifier (no-op if not configured)
         self.notifier = TelegramNotifier(
             bot_token=self.config.telegram.bot_token,
-            chat_id=self.config.telegram.chat_id,
+            chat_ids=self.config.telegram.chat_ids,
         )
         
     def _df_to_ohlcv(self, df: pd.DataFrame) -> list[dict]:

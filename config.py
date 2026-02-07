@@ -72,16 +72,18 @@ class TradingConfig:
 
 @dataclass
 class TelegramConfig:
-    """Telegram notifications configuration."""
+    """Telegram notifications configuration. Supports multiple chat IDs (comma-separated)."""
 
     bot_token: str = ""
-    chat_id: str = ""
+    chat_ids: List[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "TelegramConfig":
+        raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        chat_ids = [c.strip() for c in raw.split(",") if c.strip()]
         return cls(
-            bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+            chat_ids=chat_ids,
         )
 
 
