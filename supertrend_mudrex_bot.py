@@ -133,7 +133,7 @@ class SupertrendMudrexBot:
         """
         Process a single symbol: get data, run strategy_core, execute.
         """
-        logger.info(f"Processing {symbol}...")
+        logger.debug(f"Processing {symbol}...")
 
         df = self.data_manager.get_ohlcv(symbol)
         if df is None or len(df) < 20:
@@ -169,7 +169,10 @@ class SupertrendMudrexBot:
             config=self.strategy_config,
         )
 
-        logger.info(f"{symbol} Signal: {output['signal']} ({output['reason']})")
+        if output["signal"] != "HOLD":
+            logger.info(f"{symbol} Signal: {output['signal']} ({output['reason']})")
+        else:
+            logger.debug(f"{symbol} Signal: HOLD ({output['reason']})")
 
         if output["signal"] in ("LONG", "SHORT") and output.get("proposed_position"):
             result = self.adapter.execute_proposed_position(symbol, output["proposed_position"])

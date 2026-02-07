@@ -129,7 +129,28 @@ class MudrexStrategyAdapter:
         
         # Position state cache
         self._positions: Dict[str, PositionState] = {}
-    
+        # Asset specs from list_all() to avoid 500+ get(symbol) calls per cycle (rate limits)
+        self._asset_specs_map: Optional[Dict[str, Dict[str, Any]]] = None
+
+    def _ensure_asset_specs(self) -> None:
+        """Build symbol -> {min_quantity, quantity_step, max_leverage} from list_all() (single bulk call)."""
+        if self._asset_specs_map is not None:
+            return
+        try:
+            assets = self.client.assets.list_all()
+            self._asset_specs_map = {}
+            for a in assets:
+                self._asset_specs_map[a.symbol] = {
+                    "symbol": a.symbol,
+                    "min_quantity": float(a.min_quantity) if a.min_quantity else 0.001,
+                    "max_leverage": int(a.max_leverage) if a.max_leverage else 20,
+                    "quantity_step": float(a.quantity_step) if a.quantity_step else 0.001,
+                }
+            logger.info(f"Loaded asset specs for {len(self._asset_specs_map)} symbols (bulk)")
+        except MudrexAPIError as e:
+            logger.error(f"Failed to load asset list: {e}")
+            self._asset_specs_map = {}
+
     @property
     def client(self) -> MudrexClient:
         """Lazy-load Mudrex client."""
@@ -158,15 +179,21 @@ class MudrexStrategyAdapter:
             return 0.0
     
     def get_asset_info(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Get asset information including min quantity and precision."""
+        """Get asset information from bulk list; fallback to get(symbol) only if symbol not in list."""
+        self._ensure_asset_specs()
+        if self._asset_specs_map and symbol in self._asset_specs_map:
+            return self._asset_specs_map[symbol]
         try:
             asset = self.client.assets.get(symbol)
-            return {
+            info = {
                 "symbol": asset.symbol,
                 "min_quantity": float(asset.min_quantity) if asset.min_quantity else 0.001,
                 "max_leverage": int(asset.max_leverage) if asset.max_leverage else 20,
                 "quantity_step": float(asset.quantity_step) if asset.quantity_step else 0.001,
             }
+            if self._asset_specs_map is not None:
+                self._asset_specs_map[symbol] = info
+            return info
         except MudrexAPIError as e:
             logger.error(f"Failed to get asset info for {symbol}: {e}")
             return None
@@ -293,12 +320,13 @@ class MudrexStrategyAdapter:
                 error="Asset info unavailable",
             )
         
-        # Calculate position size: 2% of balance as margin
+        # Calculate position size: margin_percent of balance as margin
         # Margin = (Quantity * Price) / Leverage
         # Quantity = (Margin * Leverage) / Price
-        # Margin = Balance * 0.02
+        # Margin = Balance * (margin_percent / 100)
         leverage = int(self.trading_config.leverage)
-        margin = balance * 0.02  # Hardcoded 2% requirement
+        margin_pct = self.trading_config.margin_percent / 100.0
+        margin = balance * margin_pct
         
         raw_quantity = (margin * leverage) / signal_result.entry_price
         

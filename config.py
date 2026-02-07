@@ -50,7 +50,11 @@ class TradingConfig:
     
     # Default leverage
     leverage: str = "5"
-    
+
+    # Margin per entry as percent of balance (1-100). Default 2%
+    # Set via env MARGIN_PERCENT (e.g. 2 for 2%, 5 for 5%)
+    margin_percent: int = 2
+
     # Margin type
     margin_type: str = "ISOLATED"
     
@@ -126,12 +130,19 @@ class Config:
     def from_env(cls) -> "Config":
         """Load minimal config from environment."""
         dry_run = os.getenv("TRADING_DRY_RUN", "false").lower() == "true"
+        raw = os.getenv("MARGIN_PERCENT", "2").strip()
+        try:
+            margin_percent = max(1, min(100, int(raw)))
+        except ValueError:
+            margin_percent = 2
 
         config = cls(
             mudrex=MudrexConfig.from_env(),
             telegram=TelegramConfig.from_env(),
         )
         config.trading.dry_run = dry_run
+        config.trading.margin_percent = margin_percent
+        config.strategy.margin_pct = margin_percent / 100.0
         return config
     
     def validate(self) -> bool:
@@ -150,6 +161,7 @@ class Config:
             },
             "trading": {
                 "leverage": self.trading.leverage,
+                "margin_percent": self.trading.margin_percent,
                 "dry_run": self.trading.dry_run,
                 "all_symbols": True if not self.trading.symbols else False
             }
