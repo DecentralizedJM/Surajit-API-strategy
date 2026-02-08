@@ -80,7 +80,7 @@ class DataManager:
                 logger.debug(f"Backfill {symbol}: {e}")
             if (i + 1) % 100 == 0:
                 logger.info(f"Backfill progress: {i + 1}/{len(symbols)} symbols")
-            time.sleep(0.04)  # ~25 req/s to avoid Bybit rate limit
+            time.sleep(0.10)  # ~10 req/s to stay under Bybit REST rate limits
         # Coverage and gap metrics
         logger.info(
             f"Backfill complete: {ok}/{len(symbols)} symbols, {limit} candles requested; "

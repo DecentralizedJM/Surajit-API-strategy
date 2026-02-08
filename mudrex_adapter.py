@@ -687,6 +687,16 @@ class MudrexStrategyAdapter:
         
         position = self._positions[symbol]
         old_stop = position.stop_loss
+
+        # Skip no-op: same value (avoids 400 from API)
+        if abs(new_stop_loss - old_stop) < 1e-9:
+            return ExecutionResult(
+                success=True,
+                action="UPDATE_TSL",
+                symbol=symbol,
+                message="TSL unchanged (same price)",
+                position_state=position,
+            )
         
         # Validate stop movement
         if position.side == Signal.LONG:
@@ -719,14 +729,19 @@ class MudrexStrategyAdapter:
             )
         
         try:
+            # Rate limit: space TSL updates like order calls
+            delay = getattr(self.trading_config, "order_delay_seconds", 4.0)
+            if delay > 0:
+                time.sleep(delay)
             # Find position on exchange
             positions = self.client.positions.list_open()
-            
+            price_str = str(round(new_stop_loss, 4))
             for pos in positions:
                 if pos.symbol == symbol:
-                    self.client.positions.set_stoploss(
+                    # Use PATCH (edit_risk_order) to update existing risk order; POST (set_stoploss) returns 400 when order exists
+                    self.client.positions.edit_risk_order(
                         position_id=pos.position_id,
-                        price=str(round(new_stop_loss, 4)),
+                        stoploss_price=price_str,
                     )
                     position.stop_loss = new_stop_loss
                     

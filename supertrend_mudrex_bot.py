@@ -340,8 +340,8 @@ class SupertrendMudrexBot:
             skipped_no_data, coverage["symbols_with_sufficient_data"], coverage["total"],
         )
 
-        # Cycle summary notification (only if something noteworthy or errors)
-        if signals_generated > 0 or trades_executed > 0 or tsl_updates > 0 or errors:
+        # Cycle summary: only when trades executed, TSL updates, or errors (not signals-only)
+        if trades_executed > 0 or tsl_updates > 0 or errors:
             positions_count = len(self.adapter._positions)
             opened_count = sum(1 for r in results if r.get("action") in ("OPEN_LONG", "OPEN_SHORT") and r.get("success"))
             closed_count = sum(1 for r in results if r.get("action") == "CLOSE" and r.get("success"))
