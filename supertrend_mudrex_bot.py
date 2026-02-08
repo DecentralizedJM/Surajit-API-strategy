@@ -270,20 +270,32 @@ class SupertrendMudrexBot:
         
         # Sync positions with exchange
         self.adapter.get_open_positions()
+
+        # Preload asset specs once (bulk) to avoid per-symbol API calls
+        if not self.adapter.ensure_asset_specs_loaded():
+            error = "Asset specs unavailable (rate limited). Skipping cycle."
+            logger.error(error)
+            return BotExecutionResult(
+                success=False,
+                timestamp=timestamp,
+                symbols_processed=0,
+                signals_generated=0,
+                trades_executed=0,
+                tsl_updates=0,
+                errors=[error],
+            )
         
         # Determine symbols to process
         symbols = self.config.trading.symbols
         if not symbols:
             logger.info("No symbols specified, fetching all tradable assets from Mudrex...")
-            try:
-                assets = self.adapter.client.assets.list_all()
-                # Use all active USDT symbols
-                symbols = [a.symbol for a in assets if a.symbol.endswith("USDT") and a.is_active]
+            symbols = self.adapter.get_tradable_symbols()
+            if symbols:
                 logger.info(f"Discovered {len(symbols)} active USDT pairs")
-            except Exception as e:
-                logger.error(f"Failed to fetch assets: {e}")
-                errors.append(f"Asset discovery failed: {e}")
-                symbols = []
+            else:
+                err = "Asset discovery failed (rate limited or empty cache)"
+                logger.error(err)
+                errors.append(err)
 
         if not symbols:
             return BotExecutionResult(

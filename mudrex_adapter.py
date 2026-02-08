@@ -133,13 +133,25 @@ class MudrexStrategyAdapter:
         self._positions: Dict[str, PositionState] = {}
         # Asset specs from list_all() to avoid 500+ get(symbol) calls per cycle (rate limits)
         self._asset_specs_map: Optional[Dict[str, Dict[str, Any]]] = None
+        self._asset_list_cache: Optional[List[Any]] = None
+        self._asset_specs_last_attempt: float = 0.0
+        self._asset_specs_last_error: float = 0.0
+        self._asset_specs_cooldown_seconds: float = 120.0
+        self._balance_cache: Optional[float] = None
+        self._balance_cache_ts: float = 0.0
+        self._balance_cache_ttl: float = 30.0
 
     def _ensure_asset_specs(self) -> None:
         """Build symbol -> {min_quantity, quantity_step, max_leverage} from list_all() (single bulk call)."""
-        if self._asset_specs_map is not None:
+        if self._asset_specs_map is not None and self._asset_list_cache is not None:
             return
+        now = time.time()
+        if self._asset_specs_last_error and (now - self._asset_specs_last_error) < self._asset_specs_cooldown_seconds:
+            return
+        self._asset_specs_last_attempt = now
         try:
             assets = self.client.assets.list_all()
+            self._asset_list_cache = assets
             self._asset_specs_map = {}
             for a in assets:
                 self._asset_specs_map[a.symbol] = {
@@ -147,11 +159,16 @@ class MudrexStrategyAdapter:
                     "min_quantity": float(a.min_quantity) if a.min_quantity else 0.001,
                     "max_leverage": int(a.max_leverage) if a.max_leverage else 20,
                     "quantity_step": float(a.quantity_step) if a.quantity_step else 0.001,
+                    "is_active": bool(getattr(a, "is_active", True)),
                 }
             logger.info(f"Loaded asset specs for {len(self._asset_specs_map)} symbols (bulk)")
         except MudrexAPIError as e:
             logger.error(f"Failed to load asset list: {e}")
-            self._asset_specs_map = {}
+            self._asset_specs_last_error = now
+            if self._asset_specs_map is None:
+                self._asset_specs_map = {}
+            if self._asset_list_cache is None:
+                self._asset_list_cache = []
 
     @property
     def client(self) -> MudrexClient:
@@ -171,13 +188,20 @@ class MudrexStrategyAdapter:
     
     def get_balance(self) -> float:
         """Get available futures balance."""
+        now = time.time()
+        if self._balance_cache is not None and (now - self._balance_cache_ts) < self._balance_cache_ttl:
+            return self._balance_cache
         try:
             balance = self.client.wallet.get_futures_balance()
             available = float(balance.available)
             logger.info(f"Futures balance: ${available:.2f}")
+            self._balance_cache = available
+            self._balance_cache_ts = now
             return available
         except MudrexAPIError as e:
             logger.error(f"Failed to get balance: {e}")
+            if self._balance_cache is not None:
+                return self._balance_cache
             return 0.0
     
     def get_asset_info(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -185,20 +209,22 @@ class MudrexStrategyAdapter:
         self._ensure_asset_specs()
         if self._asset_specs_map and symbol in self._asset_specs_map:
             return self._asset_specs_map[symbol]
-        try:
-            asset = self.client.assets.get(symbol)
-            info = {
-                "symbol": asset.symbol,
-                "min_quantity": float(asset.min_quantity) if asset.min_quantity else 0.001,
-                "max_leverage": int(asset.max_leverage) if asset.max_leverage else 20,
-                "quantity_step": float(asset.quantity_step) if asset.quantity_step else 0.001,
-            }
-            if self._asset_specs_map is not None:
-                self._asset_specs_map[symbol] = info
-            return info
-        except MudrexAPIError as e:
-            logger.error(f"Failed to get asset info for {symbol}: {e}")
+        # Avoid per-symbol API calls when bulk list isn't available (prevents rate-limit storms)
+        if self._asset_specs_map is not None and len(self._asset_specs_map) == 0:
             return None
+        return None
+
+    def ensure_asset_specs_loaded(self) -> bool:
+        """Return True when bulk asset specs are available (rate-limit safe)."""
+        self._ensure_asset_specs()
+        return bool(self._asset_specs_map)
+
+    def get_tradable_symbols(self) -> List[str]:
+        """Get active USDT symbols using cached asset list (single bulk call)."""
+        self._ensure_asset_specs()
+        if not self._asset_list_cache:
+            return []
+        return [a.symbol for a in self._asset_list_cache if a.symbol.endswith("USDT") and getattr(a, "is_active", True)]
     
     def round_quantity(self, quantity: float, quantity_step: float) -> float:
         """Round quantity to valid step size."""
