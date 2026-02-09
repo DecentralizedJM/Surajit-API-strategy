@@ -1006,13 +1006,33 @@ class MudrexStrategyAdapter:
                             position_state=position,
                         )
                     except MudrexAPIError as e:
-                        if "risk order id missing" in str(e).lower() and not risk_order_id:
-                            logger.warning("%s: position has no risk order id; skipping TSL update", symbol)
+                        if "risk order id missing" in str(e).lower():
+                            # API didn't accept PATCH (missing id in path or body); try POST to set SL/TP
+                            try:
+                                self._throttle()
+                                ok = self.client.positions.set_risk_order(
+                                    position_id=pos.position_id,
+                                    stoploss_price=price_str,
+                                    takeprofit_price=str(round(position.take_profit, 4)),
+                                )
+                                if ok:
+                                    position.stop_loss = new_stop_loss
+                                    logger.info("%s: TSL updated via set_risk_order (PATCH had no risk order id)", symbol)
+                                    return ExecutionResult(
+                                        success=True,
+                                        action="UPDATE_TSL",
+                                        symbol=symbol,
+                                        message=f"Updated TSL from {old_stop:.4f} to {new_stop_loss:.4f} (via set)",
+                                        position_state=position,
+                                    )
+                            except MudrexAPIError:
+                                pass
+                            logger.warning("%s: TSL update failed (risk order id missing); skipping", symbol)
                             return ExecutionResult(
                                 success=True,
                                 action="UPDATE_TSL",
                                 symbol=symbol,
-                                message="TSL skip (no risk order id on exchange)",
+                                message="TSL skip (risk order id missing on exchange)",
                                 position_state=position,
                             )
                         raise

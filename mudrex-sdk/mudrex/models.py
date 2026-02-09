@@ -470,17 +470,17 @@ class Position:
         stoploss_data = data.get("stoploss")
         if isinstance(stoploss_data, dict):
             stoploss_price = stoploss_data.get("price")
-            stoploss_order_id = stoploss_data.get("order_id")
+            stoploss_order_id = stoploss_data.get("order_id") or stoploss_data.get("id")
         else:
             stoploss_price = data.get("stoploss_price")
-            stoploss_order_id = data.get("stoploss_order_id")
+            stoploss_order_id = data.get("stoploss_order_id") or data.get("risk_order_id")
 
         # Extract takeprofit_price and order_id from nested structure (API format) or flat field (legacy)
         # API returns: {"takeprofit": {"price": "5000", "order_id": "...", "order_type": "SHORT"}}
         takeprofit_data = data.get("takeprofit")
         if isinstance(takeprofit_data, dict):
             takeprofit_price = takeprofit_data.get("price")
-            takeprofit_order_id = takeprofit_data.get("order_id")
+            takeprofit_order_id = takeprofit_data.get("order_id") or takeprofit_data.get("id")
         else:
             takeprofit_price = data.get("takeprofit_price")
             takeprofit_order_id = data.get("takeprofit_order_id")

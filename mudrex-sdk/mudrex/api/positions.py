@@ -295,14 +295,19 @@ class PositionsAPI(BaseAPI):
             bool: True if updated successfully
         """
         data = {}
-        if risk_order_id:
-            data["risk_order_id"] = risk_order_id
         if stoploss_price is not None:
             data["stoploss_price"] = stoploss_price
         if takeprofit_price is not None:
             data["takeprofit_price"] = takeprofit_price
 
-        response = self._patch(f"/futures/positions/{position_id}/riskorder", data)
+        # API may require risk_order_id in the path for PATCH
+        if risk_order_id:
+            response = self._patch(
+                f"/futures/positions/{position_id}/riskorder/{risk_order_id}",
+                data,
+            )
+        else:
+            response = self._patch(f"/futures/positions/{position_id}/riskorder", data)
         return response.get("success", False)
     
     def get_history(
