@@ -979,21 +979,43 @@ class MudrexStrategyAdapter:
             price_str = str(round(new_stop_loss, 4))
             for pos in positions:
                 if pos.symbol == symbol:
-                    # Use PATCH (edit_risk_order) to update existing risk order; POST (set_stoploss) returns 400 when order exists
+                    risk_order_id = getattr(pos, "stoploss_order_id", None)
                     self._throttle()
-                    self.client.positions.edit_risk_order(
-                        position_id=pos.position_id,
-                        stoploss_price=price_str,
-                    )
-                    position.stop_loss = new_stop_loss
-                    
-                    return ExecutionResult(
-                        success=True,
-                        action="UPDATE_TSL",
-                        symbol=symbol,
-                        message=f"Updated TSL from {old_stop:.4f} to {new_stop_loss:.4f}",
-                        position_state=position,
-                    )
+                    try:
+                        if risk_order_id:
+                            self.client.positions.edit_risk_order(
+                                position_id=pos.position_id,
+                                stoploss_price=price_str,
+                                risk_order_id=risk_order_id,
+                            )
+                        else:
+                            # No existing risk order id (e.g. position from state or API didn't return it); try POST to set
+                            ok = self.client.positions.set_risk_order(
+                                position_id=pos.position_id,
+                                stoploss_price=price_str,
+                                takeprofit_price=str(round(position.take_profit, 4)),
+                            )
+                            if not ok:
+                                raise MudrexAPIError("set_risk_order returned false")
+                        position.stop_loss = new_stop_loss
+                        return ExecutionResult(
+                            success=True,
+                            action="UPDATE_TSL",
+                            symbol=symbol,
+                            message=f"Updated TSL from {old_stop:.4f} to {new_stop_loss:.4f}",
+                            position_state=position,
+                        )
+                    except MudrexAPIError as e:
+                        if "risk order id missing" in str(e).lower() and not risk_order_id:
+                            logger.warning("%s: position has no risk order id; skipping TSL update", symbol)
+                            return ExecutionResult(
+                                success=True,
+                                action="UPDATE_TSL",
+                                symbol=symbol,
+                                message="TSL skip (no risk order id on exchange)",
+                                position_state=position,
+                            )
+                        raise
             
             return ExecutionResult(
                 success=False,

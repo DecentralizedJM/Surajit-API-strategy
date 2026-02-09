@@ -458,26 +458,32 @@ class Position:
     liquidation_price: Optional[str] = None
     stoploss_price: Optional[str] = None
     takeprofit_price: Optional[str] = None
+    stoploss_order_id: Optional[str] = None  # Required by API for PATCH edit_risk_order
+    takeprofit_order_id: Optional[str] = None
     status: PositionStatus = PositionStatus.OPEN
     created_at: Optional[datetime] = None
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Position":
-        # Extract stoploss_price from nested structure (API format) or flat field (legacy)
+        # Extract stoploss_price and order_id from nested structure (API format) or flat field (legacy)
         # API returns: {"stoploss": {"price": "4100", "order_id": "...", "order_type": "SHORT"}}
         stoploss_data = data.get("stoploss")
         if isinstance(stoploss_data, dict):
             stoploss_price = stoploss_data.get("price")
+            stoploss_order_id = stoploss_data.get("order_id")
         else:
             stoploss_price = data.get("stoploss_price")
-        
-        # Extract takeprofit_price from nested structure (API format) or flat field (legacy)
+            stoploss_order_id = data.get("stoploss_order_id")
+
+        # Extract takeprofit_price and order_id from nested structure (API format) or flat field (legacy)
         # API returns: {"takeprofit": {"price": "5000", "order_id": "...", "order_type": "SHORT"}}
         takeprofit_data = data.get("takeprofit")
         if isinstance(takeprofit_data, dict):
             takeprofit_price = takeprofit_data.get("price")
+            takeprofit_order_id = takeprofit_data.get("order_id")
         else:
             takeprofit_price = data.get("takeprofit_price")
+            takeprofit_order_id = data.get("takeprofit_order_id")
         
         # Normalize terminology: Handle both quantity/size (API inconsistency)
         # Always use "quantity" internally to prevent silent zeros
@@ -504,6 +510,8 @@ class Position:
             liquidation_price=data.get("liquidation_price"),
             stoploss_price=stoploss_price,
             takeprofit_price=takeprofit_price,
+            stoploss_order_id=stoploss_order_id,
+            takeprofit_order_id=takeprofit_order_id,
             status=PositionStatus(data.get("status", "OPEN")),
             created_at=_parse_datetime(data.get("created_at")),
         )

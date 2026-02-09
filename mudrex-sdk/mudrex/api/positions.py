@@ -281,6 +281,7 @@ class PositionsAPI(BaseAPI):
         position_id: str,
         stoploss_price: Optional[str] = None,
         takeprofit_price: Optional[str] = None,
+        risk_order_id: Optional[str] = None,
     ) -> bool:
         """
         Edit existing stop-loss and/or take-profit levels.
@@ -289,16 +290,18 @@ class PositionsAPI(BaseAPI):
             position_id: The position ID
             stoploss_price: New stop-loss price (optional)
             takeprofit_price: New take-profit price (optional)
-            
+            risk_order_id: The existing risk order ID (from position.stoploss_order_id or takeprofit); required by API for PATCH
         Returns:
             bool: True if updated successfully
         """
         data = {}
+        if risk_order_id:
+            data["risk_order_id"] = risk_order_id
         if stoploss_price is not None:
             data["stoploss_price"] = stoploss_price
         if takeprofit_price is not None:
             data["takeprofit_price"] = takeprofit_price
-        
+
         response = self._patch(f"/futures/positions/{position_id}/riskorder", data)
         return response.get("success", False)
     
