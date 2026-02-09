@@ -475,19 +475,19 @@ class MudrexStrategyAdapter:
         # Margin = (Quantity * Price) / Leverage
         # Quantity = (Margin * Leverage) / Price
         # Margin = Balance * (margin_percent / 100)
-        leverage = int(self.trading_config.leverage)
-        leverage = max(
+        lev = int(self.trading_config.leverage)
+        lev = max(
             self.trading_config.leverage_min,
-            min(self.trading_config.leverage_max, leverage),
+            min(self.trading_config.leverage_max, lev),
         )
         margin_pct = self.trading_config.margin_percent / 100.0
         margin = balance * margin_pct
-        
-        raw_quantity = (margin * leverage) / signal_result.entry_price
-        
+
+        raw_quantity = (margin * lev) / signal_result.entry_price
+
         # Round to valid quantity
         quantity = self.round_quantity(raw_quantity, asset_info["quantity_step"])
-        
+
         # Check minimum quantity
         if quantity < asset_info["min_quantity"]:
             return ExecutionResult(
@@ -497,7 +497,24 @@ class MudrexStrategyAdapter:
                 message=f"Position size {quantity} below minimum {asset_info['min_quantity']}",
                 error="Position too small",
             )
-        
+
+        # Smart scaling if notional below min order value
+        min_val = getattr(self.trading_config, "min_order_value", 7.0)
+        notional = quantity * signal_result.entry_price
+        if notional < min_val:
+            scaled = self._scale_to_min_order(symbol, signal_result.entry_price, balance, asset_info, lev)
+            if scaled is not None:
+                quantity = scaled["quantity"]
+                lev = scaled["leverage"]
+            else:
+                return ExecutionResult(
+                    success=False,
+                    action="NONE",
+                    symbol=symbol,
+                    message=f"Order value ${notional:.2f} below min ${min_val:.0f} (even after scaling)",
+                    error="Order value below minimum after scaling",
+                )
+
         # Open position with 1:2 RR
         return self.open_position(
             symbol=symbol,
@@ -506,15 +523,94 @@ class MudrexStrategyAdapter:
             entry_price=signal_result.entry_price,
             stop_loss=signal_result.stop_loss,
             take_profit=signal_result.take_profit,
+            leverage=str(lev),
         )
     
+    def _scale_to_min_order(
+        self,
+        symbol: str,
+        entry_price: float,
+        balance: Optional[float],
+        asset_info: Dict[str, Any],
+        initial_lev: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Smart Scaling Fallback: try to meet min order value ($7).
+
+        Strategy (in order):
+        1. Scale leverage up to asset max_leverage (keep 2% margin).
+        2. If still below min, increase margin up to 10% of balance (safety cap).
+        3. Return dict with scaled {quantity, leverage, margin_used} or None if impossible.
+        """
+        min_val = getattr(self.trading_config, "min_order_value", 7.0)
+        asset_max_lev = int(asset_info.get("max_leverage", 20))
+        effective_max_lev = min(self.trading_config.leverage_max, asset_max_lev)
+        qty_step = asset_info["quantity_step"]
+        min_qty = asset_info["min_quantity"]
+
+        if balance is None or balance <= 0 or entry_price <= 0:
+            return None
+
+        base_margin_pct = self.trading_config.margin_percent / 100.0
+        max_margin_pct = 0.10  # safety cap: never use more than 10% of balance per trade
+
+        # Step 1: Try scaling leverage (keep original margin %)
+        margin = balance * base_margin_pct
+        for try_lev in range(initial_lev, effective_max_lev + 1):
+            raw_qty = (margin * try_lev) / entry_price
+            qty = self.round_quantity(raw_qty, qty_step)
+            if qty < min_qty:
+                continue
+            notional = qty * entry_price
+            if notional >= min_val:
+                if try_lev != initial_lev:
+                    logger.info(
+                        "%s: scaled leverage %dx -> %dx (asset max %dx) to meet min $%.0f (notional $%.2f)",
+                        symbol, initial_lev, try_lev, asset_max_lev, min_val, notional,
+                    )
+                return {"quantity": qty, "leverage": try_lev, "margin_used": margin}
+
+        # Step 2: At max leverage, increase margin up to 10% of balance
+        lev = effective_max_lev
+        required_notional = min_val
+        required_qty = required_notional / entry_price
+        required_margin = required_notional / lev
+        margin_pct_needed = required_margin / balance
+
+        if margin_pct_needed > max_margin_pct:
+            # Even 10% of balance at max leverage can't reach min order value
+            return None
+
+        margin = required_margin * 1.05  # 5% buffer so rounding doesn't push us below
+        margin = min(margin, balance * max_margin_pct)
+        raw_qty = (margin * lev) / entry_price
+        qty = self.round_quantity(raw_qty, qty_step)
+        if qty < min_qty:
+            return None
+        notional = qty * entry_price
+        if notional < min_val:
+            return None
+
+        actual_margin_pct = (margin / balance) * 100
+        logger.info(
+            "%s: scaled margin %.1f%% -> %.1f%% at %dx leverage to meet min $%.0f (notional $%.2f)",
+            symbol, base_margin_pct * 100, actual_margin_pct, lev, min_val, notional,
+        )
+        return {"quantity": qty, "leverage": lev, "margin_used": margin}
+
     def execute_proposed_position(
         self,
         symbol: str,
         proposed_position: dict,
         balance: Optional[float] = None,
     ) -> ExecutionResult:
-        """Open position from strategy_core proposed_position (quantity, leverage precomputed)."""
+        """Open position from strategy_core proposed_position (quantity, leverage precomputed).
+
+        Smart Scaling Fallback:
+        - If notional < min_order_value, scale leverage up to asset max first.
+        - If still below, increase margin up to 10% of balance (safety cap).
+        - Only reject if scaling is impossible.
+        """
         if len(self._positions) >= self.trading_config.max_positions:
             return ExecutionResult(
                 success=False,
@@ -545,42 +641,37 @@ class MudrexStrategyAdapter:
             min(effective_max_lev, lev),
         )
 
-        if notional < min_val and balance is not None and balance > 0:
-            margin_pct = self.trading_config.margin_percent / 100.0
-            margin = balance * margin_pct
-            required_lev = min_val / margin
-            if required_lev <= effective_max_lev:
-                lev = max(lev, math.ceil(required_lev))
-                lev = min(lev, effective_max_lev)
-                quantity = (margin * lev) / entry_price
-                quantity = self.round_quantity(quantity, asset_info["quantity_step"])
-                if quantity < asset_info["min_quantity"]:
-                    return ExecutionResult(
-                        success=False,
-                        action="NONE",
-                        symbol=symbol,
-                        message=f"Scaled qty {quantity} below asset min {asset_info['min_quantity']}",
-                        error="Order value below minimum",
-                    )
+        # Smart scaling if notional is below minimum
+        if notional < min_val:
+            scaled = self._scale_to_min_order(symbol, entry_price, balance, asset_info, lev)
+            if scaled is not None:
+                quantity = scaled["quantity"]
+                lev = scaled["leverage"]
                 notional = quantity * entry_price
-                if notional >= min_val:
-                    logger.info(f"Scaled to {lev}x (asset max {asset_max_lev}x) for min order value (notional ${notional:.2f})")
             else:
+                # Impossible even after scaling — notify via Telegram
+                msg = (
+                    f"Cannot open: notional ${notional:.2f} < min ${min_val:.0f}.\n"
+                    f"Even at {effective_max_lev}x leverage and 10% margin, "
+                    f"balance ${balance:.2f if balance else 0:.2f} is too low."
+                )
+                logger.warning("%s: %s", symbol, msg)
                 return ExecutionResult(
                     success=False,
                     action="NONE",
                     symbol=symbol,
-                    message=f"Cannot reach min ${min_val:.0f} (need {required_lev:.0f}x > asset max {asset_max_lev}x)",
-                    error="Order value below minimum",
+                    message=msg,
+                    error="Order value below minimum after scaling",
                 )
 
-        if notional < min_val:
+        # Final validation: quantity must meet asset min after all scaling
+        if quantity < asset_info["min_quantity"]:
             return ExecutionResult(
                 success=False,
                 action="NONE",
                 symbol=symbol,
-                message=f"Order value ${notional:.2f} below minimum ${min_val:.0f}",
-                error="Order value below minimum",
+                message=f"Quantity {quantity} below asset min {asset_info['min_quantity']}",
+                error="Position too small",
             )
 
         leverage = str(lev)

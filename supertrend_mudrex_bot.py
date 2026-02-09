@@ -388,6 +388,8 @@ class SupertrendMudrexBot:
             else:
                 open_result = self.adapter.execute_proposed_position(best_symbol, best_pp, balance=balance)
                 results[best_idx] = open_result.to_dict()
+                if not open_result.success and open_result.error and "after scaling" in open_result.error:
+                    self.notifier.notify_warning(best_symbol, open_result.message or open_result.error)
                 if open_result.success and open_result.action in ("OPEN_LONG", "OPEN_SHORT"):
                     trades_executed += 1
                     self._last_position_open_time = now_ts

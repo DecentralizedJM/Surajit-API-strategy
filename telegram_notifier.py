@@ -95,6 +95,11 @@ class TelegramNotifier:
         )
         return self.send(text)
 
+    def notify_warning(self, symbol: str, message: str) -> bool:
+        """Send a warning notification (e.g. trade impossible even after scaling)."""
+        text = f"⚠️ <b>WARNING</b> {symbol}\n{message}"
+        return self.send(text)
+
     def notify_cycle(
         self,
         balance: float,
